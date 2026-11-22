@@ -53,6 +53,16 @@ string chooseImagePath() {
 bool loadImage(const string& path) {
     int w, h, channels;
 
+    // Reject oversized images before decoding them into memory.
+    if (!stbi_info(path.c_str(), &w, &h, &channels)) {
+        cerr << "Could not open PNG: " << path << "\n";
+        return false;
+    }
+    if (w > 4096 || h > 4096) {
+        cerr << "Image must be at most 4096 x 4096 pixels.\n";
+        return false;
+    }
+
     unsigned char* rgba = stbi_load(path.c_str(), &w, &h, &channels, 4);
 
     if (!rgba) {
@@ -179,11 +189,30 @@ void drawInspector() {
     float left = 410, cell = 35;
 
     glBegin(GL_QUADS);
-    for (int dy = -1; dy <= 1; ++dy) for (int dx = -1; dx <= 1; ++dx) {
-        int x = selectedX + dx * blockSize, y = selectedY + dy * blockSize;
-        if (x < 0 || y < 0 || x >= image.width || y >= image.height) continue;
-        int px, py; samplePosition(x, y, px, py); glColor3ubv(colorAt(px, py));
-        rectangle(left + (dx + 1) * cell, top + (dy + 1) * cell, cell, cell);
+    // Iterate over 3x3 neighborhood around selected block (-1, 0, +1 in both directions)
+    for (int dy = -1; dy <= 1; ++dy) {
+        for (int dx = -1; dx <= 1; ++dx) {
+            // Calculate pixel coordinates for this neighbor
+            int x = selectedX + dx * blockSize;
+            int y = selectedY + dy * blockSize;
+
+            // Skip if coordinates are outside image bounds
+            if (x < 0 || y < 0 || x >= image.width || y >= image.height) {
+                continue;
+            }
+
+            // Sample the color at this position
+            int px, py;
+            samplePosition(x, y, px, py);
+            glColor3ubv(colorAt(px, py));
+
+            // Draw a cell for this neighbor in the 3x3 grid
+            // (dx + 1) and (dy + 1) convert -1..1 range to 0..2 for grid positioning
+            rectangle(left + (dx + 1) * cell,
+                      top + (dy + 1) * cell,
+                      cell,
+                      cell);
+        }
     }
     glEnd();
 
@@ -220,11 +249,14 @@ bool saveImage() {
     vector<unsigned char> result(image.rgb.size());
     for (int y = 0; y < image.height; y += blockSize)
         for (int x = 0; x < image.width; x += blockSize) {
-            int sx, sy; samplePosition(x, y, sx, sy); const unsigned char* c = colorAt(sx, sy);
+            int sx, sy; samplePosition(x, y, sx, sy); 
+            const unsigned char* c = colorAt(sx, sy);
+
             for (int py = y; py < min(y + blockSize, image.height); ++py)
                 for (int px = x; px < min(x + blockSize, image.width); ++px)
                     for (int k = 0; k < 3; ++k) result[(static_cast<size_t>(py) * image.width + px) * 3 + k] = c[k];
         }
+        
     bool ok = stbi_write_png("pixelcraft-output.png", image.width, image.height, 3, result.data(), image.width * 3) != 0;
     message = ok ? "Saved pixelcraft-output.png (overwrites earlier output)." : "Save failed; check folder permissions.";
     cout << message << "\n"; selectedX = selectedY = -1; return ok;
